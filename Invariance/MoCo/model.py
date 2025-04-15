@@ -4,14 +4,15 @@ import timm
 import copy
 import torch.nn as nn
 from torchvision.transforms import v2
-
+from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
 
 class MoCo(pl.LightningModule):
-    def __init__(self, model_name, m=0.99, tau=0.07, lr=1e-3, mlp_dim=4096, pred_dim=256):
+    """
+    Momentum Contrast as Pytorch LightningModule. The variables are utilized from the self.hparams
+    """
+    def __init__(self, model_name, epochs, warmup_epochs, m=0.99, tau=0.2, lr=1e-4, mlp_dim=4096, pred_dim=256):
         super().__init__()
         self.save_hyperparameters()
-        self.tau = tau
-        self.m = m
         
         # Backbone (feature extractor)
         backbone = timm.create_model(model_name, pretrained=False, num_classes=0)
@@ -24,12 +25,10 @@ class MoCo(pl.LightningModule):
 
         # Offline encoder (f_k): backbone + projection
         self.momentum_encoder = copy.deepcopy(self.encoder)
-        
-        self.loss_fn = nn.CrossEntropyLoss()
-        # Remove grad from momentum_encoder
         for param in self.momentum_encoder.parameters():
             param.requires_grad = False
-    
+
+        self.loss_fn = nn.CrossEntropyLoss()
     
     def _build_mlp(self, num_layers, input_dim, mlp_dim, output_dim, last_bn=True):
         """
@@ -63,7 +62,10 @@ class MoCo(pl.LightningModule):
         # Symmetric loss
         loss = self.contrastive_loss(q1, k2) + self.contrastive_loss(q2, k1)
         self._momentum_update()
-        self.log("train_loss", loss)
+        
+        # Batch size
+        N = x1.shape[0]
+        self.log("train_loss", loss, batch_size=N)
         return loss
     
         
@@ -71,29 +73,44 @@ class MoCo(pl.LightningModule):
         # Normalize
         q = nn.functional.normalize(q, dim=1)
         k = nn.functional.normalize(k, dim=1)
-        logits = torch.matmul(q, k.T) / self.tau
-        print("logits shape:", logits.shape)
+        logits = torch.matmul(q, k.T) / self.hparams.tau
         
         # Batch size
         N = logits.shape[0]
-        print("N:", N)
         
         # The diagonal should be the largest element
         labels = torch.arange(N, device=logits.device)
         loss = self.loss_fn(logits, labels)
-        print("Loss:", loss)
         
-        return 2 * self.tau * loss
+        return 2 * self.hparams.tau * loss
         
-    # def validation_step(self, ):
-        
-    #     return ...
-    
     @torch.no_grad()
     def _momentum_update(self):
         for param_q, param_k in zip(self.encoder.parameters(), self.momentum_encoder.parameters()):
-            param_k.data = self.m * param_k.data + (1. - self.m) * param_q.data
+            param_k.data = self.hparams.m * param_k.data + (1. - self.hparams.m) * param_q.data
 
     def configure_optimizers(self):
-        optim = torch.optim.Adam(self.encoder.parameters(), lr=self.hparams.lr)
-        return optim
+        optimizer = torch.optim.AdamW(self.encoder.parameters(), lr=self.hparams.lr)
+        
+        # Create linear warmup scheduler
+        warmup_scheduler = LinearLR(
+            optimizer,
+            start_factor=0.01,
+            end_factor=1.0,
+            total_iters=self.hparams.warmup_epochs
+        )
+
+        # Create cosine decay scheduler
+        cosine_scheduler = CosineAnnealingLR(
+            optimizer,
+            T_max=self.hparams.epochs - self.hparams.warmup_epochs,
+            eta_min=0.0
+        )
+
+        # Combine them in sequence
+        lr_scheduler = SequentialLR(
+            optimizer,
+            schedulers=[warmup_scheduler, cosine_scheduler],
+            milestones=[self.hparams.warmup_epochs]
+        )
+        return {"optimizer": optimizer, "lr_scheduler": lr_scheduler}
