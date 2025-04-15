@@ -175,4 +175,5 @@ cython_debug/
 
 
 data/
-
+__pycache__
+logs
