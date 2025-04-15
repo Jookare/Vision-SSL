@@ -1,7 +1,15 @@
 # Momentum Contrast
-This implementations contains the 
+This implementations contains the code for Momentum contrast (MoCo) v3.
+- v1: https://arxiv.org/abs/1911.05722 published in CVPR 2020.
+- v2: https://arxiv.org/abs/2003.04297
+- v3: https://arxiv.org/pdf/2104.02057 published in ICCV 2021.
 
+For more information read the papers or check for example 
+[this Medium post](https://medium.com/data-science/from-moco-v1-to-v3-towards-building-a-dynamic-dictionary-for-self-supervised-learning-part-1-745dc3b4e861)
 
-- Paper 1: 
-- Paper 2: 
-- Paper 3: https://arxiv.org/pdf/2104.02057
+> [!NOTE]
+> For training it is important to ensure that the mini-batch contains balanced amount of samples from classes.
+
+## MoCo v3 
+
+![Momentum Contrast v3 architecture diagram](../../images/MoCo.png)

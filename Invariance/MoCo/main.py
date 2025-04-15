@@ -30,9 +30,9 @@ def parse_arguments():
                         help="Learning rate.")
     
     # Batch size configuration
-    parser.add_argument("--batch_size", type=int, default=256, 
+    parser.add_argument("--batch_size", type=int, default=200, 
                         help="Per-device batch size.")
-    parser.add_argument("--full_batch_size", type=int, default=4096, 
+    parser.add_argument("--full_batch_size", type=int, default=4000, 
                         help="Target effective batch size.")
     parser.add_argument("--accum_grad_steps", type=int, default=1, 
                         help="Steps to accumulate gradients.")

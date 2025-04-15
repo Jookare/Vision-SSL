@@ -53,8 +53,8 @@ class MoCo(pl.LightningModule):
         x1, x2 = batch[0], batch[1]
         
         # MoCo v3 query/key
-        q1 = self.encoder(x1)
-        q2 = self.encoder(x2)
+        q1 = self.predictor(self.encoder(x1))
+        q2 = self.predictor(self.encoder(x2))
         with torch.no_grad():
             k1 = self.momentum_encoder(x1)
             k2 = self.momentum_encoder(x2)
@@ -90,7 +90,8 @@ class MoCo(pl.LightningModule):
             param_k.data = self.hparams.m * param_k.data + (1. - self.hparams.m) * param_q.data
 
     def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(self.encoder.parameters(), lr=self.hparams.lr)
+        params = list(self.encoder.parameters()) + list(self.predictor.parameters())
+        optimizer = torch.optim.AdamW(params, lr=self.hparams.lr)
         
         # Create linear warmup scheduler
         warmup_scheduler = LinearLR(
