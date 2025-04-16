@@ -2,15 +2,15 @@ import torch
 import torch.nn as nn
 from torchvision.transforms import v2
 
-class Augment_v2(nn.Module):
+class Augment(nn.Module):
     """
-    MoCo v2 augments
+    SimCLR augments
     Adapted from:
-        Kaiming He, Haoqi Fan, Yuxin Wu, Saining Xie, Ross Girshick; 
-        "Momentum Contrast for Unsupervised Visual Representation Learning";
-        https://github.com/facebookresearch/moco
+        Ting Chen, Simon Kornblith, Mohammad Norouzi, Geoffrey Hinton
+        "A Simple Framework for Contrastive Learning of Visual Representations";
+        https://github.com/google-research/simclr
     """
-    def __init__(self, image_size):
+    def __init__(self, image_size, s = 1):
         super().__init__()
         
         # Compute kernel size for blur
@@ -20,11 +20,11 @@ class Augment_v2(nn.Module):
         
         # Define augment
         self.augment = v2.Compose([
-            v2.RandomResizedCrop(224, scale=(0.2, 1.0)),
-            v2.RandomApply([v2.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
+            v2.RandomResizedCrop(224),
+            v2.RandomHorizontalFlip(),
+            v2.RandomApply([v2.ColorJitter(0.8*s, 0.8*s, 0.8*s, 0.2*s)], p=0.8),
             v2.RandomGrayscale(p=0.2),
             v2.RandomApply([v2.GaussianBlur(kernel_size=kernel_size, sigma=(0.1, 2.0))], p=0.5),
-            v2.RandomHorizontalFlip(),
             v2.ToImage(), 
             v2.ToDtype(torch.float32, scale=True),
             v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])

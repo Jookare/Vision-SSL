@@ -48,6 +48,12 @@ class MoCo(pl.LightningModule):
                 mlp.append(nn.BatchNorm1d(dim2, affine=False))
 
         return nn.Sequential(*mlp)
+
+    def forward(self, x):
+        """
+        Forward pass through the encoder
+        """
+        return self.encoder(x)
         
     def training_step(self, batch, batch_idx):
         x1, x2 = batch[0], batch[1]

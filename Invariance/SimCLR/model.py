@@ -1,67 +1,44 @@
 import torch
 import lightning.pytorch as pl
 import timm
-import copy
 import torch.nn as nn
-from torchvision.transforms import v2
 from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
 
-class MoCo(pl.LightningModule):
+class SimCLR(pl.LightningModule):
     """
-    Momentum Contrast as Pytorch LightningModule. The variables are utilized from the self.hparams
+    SimCLR as Pytorch LightningModule. The variables are utilized from the self.hparams
     """
-    def __init__(self, model_name, epochs, warmup_epochs, m=0.99, tau=0.2, lr=1e-4, mlp_dim=4096, pred_dim=256):
+    def __init__(self, model_name, epochs, warmup_epochs=10, tau=0.2, lr=1e-4, mlp_dim=4096, proj_dim=128):
         super().__init__()
         self.save_hyperparameters()
-        
-        # Backbone (feature extractor)
-        backbone = timm.create_model(model_name, pretrained=False, num_classes=0)
-        embed_dim = backbone.num_features
-        
-        # Online encoder (f_q): backbone + projection + prediction as in MoCo v3
-        self.encoder = backbone
-        self.encoder.head = self._build_mlp(3, embed_dim, mlp_dim, pred_dim)
-        self.predictor = self._build_mlp(2, pred_dim, mlp_dim, pred_dim)
 
-        # Offline encoder (f_k): backbone + projection
-        self.momentum_encoder = copy.deepcopy(self.encoder)
-        for param in self.momentum_encoder.parameters():
-            param.requires_grad = False
+        # Backbone encoder
+        self.encoder = timm.create_model(model_name, pretrained=False, num_classes=0)
+        embed_dim = self.encoder.num_features
 
+        # MLP projection head
+        self.projector = nn.Sequential(
+            nn.Linear(embed_dim, mlp_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(mlp_dim, proj_dim)
+        )
+
+        # Loss function
         self.loss_fn = nn.CrossEntropyLoss()
     
-    def _build_mlp(self, num_layers, input_dim, mlp_dim, output_dim, last_bn=True):
-        """
-        Adapted from https://github.com/facebookresearch/moco-v3
-        """
-        mlp = []
-        for l in range(num_layers):
-            dim1 = input_dim if l == 0 else mlp_dim
-            dim2 = output_dim if l == num_layers - 1 else mlp_dim
-
-            mlp.append(nn.Linear(dim1, dim2, bias=False))
-
-            if l < num_layers - 1:
-                mlp.append(nn.BatchNorm1d(dim2))
-                mlp.append(nn.ReLU(inplace=True))
-            elif last_bn:
-                mlp.append(nn.BatchNorm1d(dim2, affine=False))
-
-        return nn.Sequential(*mlp)
-        
+    def forward(self, x):
+        features = self.encoder(x)
+        projections = self.projector(features)
+        return projections
+    
     def training_step(self, batch, batch_idx):
-        x1, x2 = batch[0], batch[1]
+        x1, x2 = batch[0], batch[1]  # Two views of the same batch
         
-        # MoCo v3 query/key
-        q1 = self.predictor(self.encoder(x1))
-        q2 = self.predictor(self.encoder(x2))
-        with torch.no_grad():
-            k1 = self.momentum_encoder(x1)
-            k2 = self.momentum_encoder(x2)
+        z1 = self.forward(x1)
+        z2 = self.forward(x2)
         
         # Symmetric loss
-        loss = self.contrastive_loss(q1, k2) + self.contrastive_loss(q2, k1)
-        self._momentum_update()
+        loss = 0.5*(self.InfoNCE_loss(z1, z2) + self.InfoNCE_loss(z2, z1))
         
         # Batch size
         N = x1.shape[0]
@@ -69,11 +46,24 @@ class MoCo(pl.LightningModule):
         return loss
     
         
-    def contrastive_loss(self, q, k):
-        # Normalize
-        q = nn.functional.normalize(q, dim=1)
-        k = nn.functional.normalize(k, dim=1)
-        logits = torch.matmul(q, k.T) / self.hparams.tau
+    def InfoNCE_loss(self, z1, z2):
+        """
+        Computes the InfoNCE loss between two batches of projected features.
+
+        This implementation avoids the traditional 2N-based formulation of SimCLR by treating 
+        the two augmented views (z1 and z2) as separate inputs. Instead of concatenating them, 
+        we compute the cosine similarity matrix directly between z1 and z2, and use the 
+        diagonal as the positive pairs. Each row in z1 is matched with the same index in z2.
+
+        This maximizes the similarity between corresponding (positive) pairs while 
+        minimizing it with respect to the rest (negatives in the same batch).
+        """
+        # Compute cosine similarity
+        z1 = nn.functional.normalize(z1, dim=1)
+        z2 = nn.functional.normalize(z2, dim=1)
+
+        # Compute similarity matrix
+        logits = torch.matmul(z1, z2.T) / self.hparams.tau
         
         # Batch size
         N = logits.shape[0]
@@ -82,15 +72,10 @@ class MoCo(pl.LightningModule):
         labels = torch.arange(N, device=logits.device)
         loss = self.loss_fn(logits, labels)
         
-        return 2 * self.hparams.tau * loss
+        return loss
         
-    @torch.no_grad()
-    def _momentum_update(self):
-        for param_q, param_k in zip(self.encoder.parameters(), self.momentum_encoder.parameters()):
-            param_k.data = self.hparams.m * param_k.data + (1. - self.hparams.m) * param_q.data
-
     def configure_optimizers(self):
-        params = list(self.encoder.parameters()) + list(self.predictor.parameters())
+        params = list(self.encoder.parameters()) + list(self.projector.parameters())
         optimizer = torch.optim.AdamW(params, lr=self.hparams.lr)
         
         # Create linear warmup scheduler
