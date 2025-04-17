@@ -75,7 +75,7 @@ class BarlowTwins(pl.LightningModule):
             list(self.projector.parameters())
         )
 
-        optimizer = torch.optim.AdamW(params, lr=self.hparams.lr, weight_decay=self.hparams.weight_decay)
+        optimizer = torch.optim.SGD(params, lr=self.hparams.lr, momentum=0.9, nesterov=True)
         
         # Create linear warmup scheduler
         warmup_scheduler = LinearLR(
