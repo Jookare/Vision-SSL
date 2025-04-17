@@ -13,12 +13,11 @@ For conceptual overviews, see:
 - [Review: SimCLR v2](https://medium.com/@sh-tsang/review-simclrv2-big-self-supervised-models-are-strong-semi-supervised-learners-bf65be0183e4)
 
 
-> [!NOTE]
-> For training it is important to ensure that the mini-batch contains balanced amount of samples from classes.
 ## Architecture
 
-![Momentum Contrast v3 architecture diagram](../../images/SimCLR.png)
+![SimCLR architecture diagram](../../images/SimCLR.png)
 
+$x_1$ and $x_2$ are two different augmented views of same image.
 
 ## Usage
 

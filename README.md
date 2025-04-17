@@ -48,3 +48,8 @@ Each method includes its own:
 - `train.py` — for pretraining  
 - `model.py` — with clean `forward()` for downstream use  
 - `misc.py` — with other required functions
+
+
+
+> [!NOTE]
+> For training in invariance based methods it is important to ensure that the mini-batch contains balanced amount of samples from classes.

@@ -11,8 +11,9 @@ For a conceptual overview, check out for example this [Medium post](https://medi
 
 ## Architecture
 
-![Momentum Contrast v3 architecture diagram](../../images/MoCo.png)
+![MoCo v3 architecture diagram](../../images/MoCo.png)
 
+$x_1$ and $x_2$ are two different augmented views of same image.
 
 ## Usage
 
