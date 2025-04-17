@@ -16,7 +16,7 @@ For a conceptual overview, check out for example this [Medium post](https://medi
 
 ## Usage
 
-Train MoCo v3 using the `train.py` script:
+Train using the `train.py` script:
 
 Pretrain with:
 

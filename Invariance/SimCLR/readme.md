@@ -22,7 +22,7 @@ For conceptual overviews, see:
 
 ## Usage
 
-Train MoCo v3 using the `train.py` script:
+Train using the `train.py` script:
 
 Pretrain with:
 

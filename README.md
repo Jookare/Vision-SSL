@@ -1,20 +1,50 @@
 # Vision-SSL
-Contains implementations of popular self-supervised learning methods used in computer vision
+This repository contains clean, modular implementations of popular **self-supervised learning (SSL)** methods for computer vision.
+
+---
 
 ## Navigation
-The methods have been divided into `Generative`, `Invariance`, and `Other` categories. 
-- `Generative`: methods mask a portion of the image and then try to learn to reconstruct the missing part of the image. 
-- `Invariance`: methods apply different augmentations to generate multiple views from same image and then try to match the embeddings. 
-- `Other`: methods contains methods that do not explicitly fit either.
+Methods are organized into the following categories:
+
+- **Generative**  
+  Models that reconstruct masked parts of the input image (e.g., MAE, iGPT).
+
+- **Invariance-based**  
+  Models that enforce consistent embeddings across augmented views of the same image (e.g., SimCLR, MoCo).
+
+- **Other**  
+  Methods that do not explicitly fit into the above categories but are part of the broader SSL landscape (e.g., I-JEPA).
+
 
 > [!Note]  
-> All models are structured such that the `forward()` method returns the output used for downstream tasks.  
-> Pretraining-specific logic (e.g., projection heads, momentum encoders) is handled separately in the training steps.
+> All models are structured such that the `forward()` method returns the **encoder output** used in downstream tasks.  
+> Pretraining components (e.g., projection heads, momentum encoders) are implemented separately in training logic.
 
+---
+
+## Implemented Methods
 Currently implemented methods include the following models:
 
+| Model   | Year | Category     |
+|---------|------|--------------|
+| MoCo    | 2019 | Invariance   |
+| SimCLR  | 2020 | Invariance   |
 
-| Model          | Year |  Category |
-|----------------|------|-----------|
-|MoCo            | 2019 | Invariance | 
-|SimCLR          | 2020 | Invariance |
+More methods coming soon...
+
+## 📁 Project Structure
+```
+. 
+├── generative/ 
+│   └── <Method>/ 
+├── invariance/ 
+│   └── MoCo/ 
+│   └── SimCLR/ 
+└── images/ 
+    └── <method>.png
+```
+
+Each method includes its own:
+- `train.py` — for pretraining  
+- `model.py` — with clean `forward()` for downstream use  
+- `misc.py` — with other required functions
