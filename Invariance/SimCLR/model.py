@@ -8,19 +8,22 @@ class SimCLR(pl.LightningModule):
     """
     SimCLR as Pytorch LightningModule. The variables are utilized from the self.hparams
     """
-    def __init__(self, model_name, epochs, warmup_epochs=10, tau=0.2, lr=1e-4, mlp_dim=4096, proj_dim=128):
+    def __init__(self, model_name, img_size, epochs, warmup_epochs, weight_decay, lr, tau, mlp_dim=4096, proj_dim=128):
         super().__init__()
         self.save_hyperparameters()
 
         # Backbone encoder
-        self.encoder = timm.create_model(model_name, pretrained=False, num_classes=0)
+        self.encoder = timm.create_model(model_name, pretrained=False, num_classes=0, img_size=img_size)
         embed_dim = self.encoder.num_features
+        self.encoder.head = nn.Linear(embed_dim, embed_dim)
+        self.batch_norm = nn.BatchNorm1d(embed_dim)
 
         # MLP projection head
         self.projector = nn.Sequential(
             nn.Linear(embed_dim, mlp_dim),
+            nn.BatchNorm1d(mlp_dim),
             nn.ReLU(inplace=True),
-            nn.Linear(mlp_dim, proj_dim)
+            nn.Linear(mlp_dim, proj_dim, bias=False),
         )
 
         # Loss function
@@ -28,14 +31,13 @@ class SimCLR(pl.LightningModule):
     
     def forward(self, x):
         features = self.encoder(x)
-        projections = self.projector(features)
-        return projections
+        return features
     
     def training_step(self, batch, batch_idx):
         x1, x2 = batch[0], batch[1]  # Two views of the same batch
         
-        z1 = self.forward(x1)
-        z2 = self.forward(x2)
+        z1 = self.projector(self.batch_norm(self.forward(x1)))
+        z2 = self.projector(self.batch_norm(self.forward(x2)))
         
         # Symmetric loss
         loss = 0.5*(self.InfoNCE_loss(z1, z2) + self.InfoNCE_loss(z2, z1))

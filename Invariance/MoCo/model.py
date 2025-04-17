@@ -10,12 +10,12 @@ class MoCo(pl.LightningModule):
     """
     Momentum Contrast as Pytorch LightningModule. The variables are utilized from the self.hparams
     """
-    def __init__(self, model_name, epochs, warmup_epochs, m=0.99, tau=0.2, lr=1e-4, mlp_dim=4096, pred_dim=256):
+    def __init__(self, model_name, img_size, epochs, warmup_epochs, weight_decay, m, tau, lr, mlp_dim=4096, pred_dim=256):
         super().__init__()
         self.save_hyperparameters()
         
         # Backbone (feature extractor)
-        backbone = timm.create_model(model_name, pretrained=False, num_classes=0)
+        backbone = timm.create_model(model_name, pretrained=False, num_classes=0, img_size=img_size)
         embed_dim = backbone.num_features
         
         # Online encoder (f_q): backbone + projection + prediction as in MoCo v3
@@ -59,8 +59,8 @@ class MoCo(pl.LightningModule):
         x1, x2 = batch[0], batch[1]
         
         # MoCo v3 query/key
-        q1 = self.predictor(self.encoder(x1))
-        q2 = self.predictor(self.encoder(x2))
+        q1 = self.predictor(self.forward(x1))
+        q2 = self.predictor(self.forward(x2))
         with torch.no_grad():
             k1 = self.momentum_encoder(x1)
             k2 = self.momentum_encoder(x2)
@@ -97,7 +97,7 @@ class MoCo(pl.LightningModule):
 
     def configure_optimizers(self):
         params = list(self.encoder.parameters()) + list(self.predictor.parameters())
-        optimizer = torch.optim.AdamW(params, lr=self.hparams.lr)
+        optimizer = torch.optim.AdamW(params, lr=self.hparams.lr, weight_decay=self.hparams.weight_decay)
         
         # Create linear warmup scheduler
         warmup_scheduler = LinearLR(

@@ -7,10 +7,14 @@ The methods have been divided into `Generative`, `Invariance`, and `Other` categ
 - `Invariance`: methods apply different augmentations to generate multiple views from same image and then try to match the embeddings. 
 - `Other`: methods contains methods that do not explicitly fit either.
 
+> [!Note]  
+> All models are structured such that the `forward()` method returns the output used for downstream tasks.  
+> Pretraining-specific logic (e.g., projection heads, momentum encoders) is handled separately in the training steps.
+
 Currently implemented methods include the following models:
 
 
 | Model          | Year |  Category |
 |----------------|------|-----------|
 |MoCo            | 2019 | Invariance | 
-|SimCLR          | 2020 | Invariance | 
+|SimCLR          | 2020 | Invariance |

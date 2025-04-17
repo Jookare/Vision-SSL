@@ -1,7 +1,6 @@
 import argparse
 
 import torch
-import timm
 import torchvision
 from torch.utils.data import DataLoader
 
@@ -9,8 +8,8 @@ from lightning.pytorch import Trainer
 from lightning.pytorch.loggers import TensorBoardLogger
 from lightning.pytorch.callbacks import ModelCheckpoint
 
-from misc import collate_fn, Augment_v2
-from model import MoCo
+from misc import collate_fn, Augment
+from model import SimCLR
 
 
 def parse_arguments():
@@ -22,12 +21,16 @@ def parse_arguments():
                         help="Name of the model architecture.")
     
     # Training parameters
-    parser.add_argument("--epochs", type=int, default=200, 
+    parser.add_argument("--epochs", type=int, default=100, 
                         help="Total training epochs.")
-    parser.add_argument("--warmup_epochs", type=int, default=40, 
+    parser.add_argument("--warmup_epochs", type=int, default=10, 
                         help="Number of warmup epochs.")
-    parser.add_argument("--lr", type=float, default=1e-4, 
+    parser.add_argument("--lr", type=float, default=3e-4, 
                         help="Learning rate.")
+    parser.add_argument("--weight_decay", type=float, default=1e-4, 
+                        help="Weight decay.")
+    parser.add_argument("--tau", type=float, default=0.2, 
+                        help="Temperature parameter.")
     
     # Batch size configuration
     parser.add_argument("--batch_size", type=int, default=200, 
@@ -67,11 +70,11 @@ def setup(args):
 def main(args):
     """Main training function."""
     # Dataset setup
-    train_dataset = torchvision.datasets.ImageFolder(root="../../data/imagenet")
+    train_dataset = torchvision.datasets.CIFAR10(root="../../data/", train=True)
     img_size = train_dataset[0][0].size[0]
     
     # Data loader with augmentation
-    augment = Augment_v2(image_size=img_size)
+    augment = Augment(image_size=img_size)
     train_loader = DataLoader(
         dataset=train_dataset,
         batch_size=args.batch_size,
@@ -107,7 +110,7 @@ def main(args):
     )
     
     # Initialize model
-    model = MoCo(args.model_name, args.epochs, args.warmup_epochs)
+    model = SimCLR(args.model_name, img_size, args.epochs, args.warmup_epochs, args.weight_decay, args.lr, args.tau)
 
     # Fit the model
     trainer.fit(model, train_dataloaders=train_loader)

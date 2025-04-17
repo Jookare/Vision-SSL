@@ -20,14 +20,16 @@ class Augment(nn.Module):
         
         # Define augment
         self.augment = v2.Compose([
-            v2.RandomResizedCrop(224),
+            v2.RandomResizedCrop(image_size),
             v2.RandomHorizontalFlip(),
             v2.RandomApply([v2.ColorJitter(0.8*s, 0.8*s, 0.8*s, 0.2*s)], p=0.8),
             v2.RandomGrayscale(p=0.2),
             v2.RandomApply([v2.GaussianBlur(kernel_size=kernel_size, sigma=(0.1, 2.0))], p=0.5),
             v2.ToImage(), 
             v2.ToDtype(torch.float32, scale=True),
-            v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            # Cifar10 normalization
+            v2.Normalize(mean=(0.4914, 0.4822, 0.4465), 
+                         std=(0.2023, 0.1994, 0.2010))
         ])
 
     def forward(self, x):
