@@ -4,7 +4,7 @@ from torchvision.transforms import v2
 
 class Augment(nn.Module):
     """
-    BYOL augmentations from the paper
+    Barlow Twins augmentations from the paper
     """
     def __init__(self, image_size, s = 1):
         super().__init__()

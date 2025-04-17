@@ -24,4 +24,4 @@ python train.py
 
 After pretraining
 - ✅ Keep the encoder
-- ❌ Discard the target network, projector, and predictor
+- ❌ Discard the projector
