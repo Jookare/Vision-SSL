@@ -35,12 +35,12 @@ More methods coming soon...
 Planned implementations include the following:
 | Model           | Year | Category     |
 |-----------------|------|--------------|
+| SimMIM	      | 2021 | Generative   |
 | MAE	          | 2021 | Generative   |
 | BEiT	          | 2022 | Generative   |
-| SimMIM	      | 2021 | Generative   |
-| I-JEPA	      | 2023 | Other        |
 | DINO	          | 2021 | Other        |
 | DINOv2          | 2023 | Other        |
+| I-JEPA	      | 2023 | Other        |
 
 ## 📁 Project Structure
 ```
