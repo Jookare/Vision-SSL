@@ -11,7 +11,7 @@ Barlow Twins proposes a loss function that aligns the embeddings of two augmente
 
 
 For an intuitive explanation: 
-- [Review: Barlow Twins - Medium](https://medium.com/@nazimbendib/paper-explained-barlow-twins-self-supervised-learning-via-redundancy-reduction-barlow-twins-92c90b49b21e)  
+- [Review: Barlow Twins - Medium](https://sh-tsang.medium.com/review-barlow-twins-self-supervised-learning-via-redundancy-reduction-967769fafc1)  
 
 
 ## Architecture

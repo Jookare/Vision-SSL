@@ -9,8 +9,7 @@ from lightning.pytorch.loggers import TensorBoardLogger
 from lightning.pytorch.callbacks import ModelCheckpoint
 
 from misc import collate_fn, Augment
-from model import SimCLR
-
+from model import MAE
 
 def parse_arguments():
     """Parse command line arguments for model training."""
@@ -21,21 +20,23 @@ def parse_arguments():
                         help="Name of the model architecture.")
     
     # Training parameters
-    parser.add_argument("--epochs", type=int, default=100, 
+    parser.add_argument("--epochs", type=int, default=200, 
                         help="Total training epochs.")
     parser.add_argument("--warmup_epochs", type=int, default=10, 
                         help="Number of warmup epochs.")
-    parser.add_argument("--lr", type=float, default=3e-4, 
+    parser.add_argument("--lr", type=float, default=1e-4, 
                         help="Learning rate.")
-    parser.add_argument("--weight_decay", type=float, default=1e-4, 
+    parser.add_argument("--weight_decay", type=float, default=1e-6, 
                         help="Weight decay.")
-    parser.add_argument("--tau", type=float, default=0.2, 
-                        help="Temperature parameter.")
+    parser.add_argument('--mask_ratio', default=0.75, type=float,
+                        help='Masking ratio (percentage of removed patches).')
+    parser.add_argument('--norm_pix_loss', action='store_true',
+                        help='Use (per-patch) normalized pixels as targets for computing loss')
     
     # Batch size configuration
-    parser.add_argument("--batch_size", type=int, default=200, 
+    parser.add_argument("--batch_size", type=int, default=256, 
                         help="Per-device batch size.")
-    parser.add_argument("--full_batch_size", type=int, default=4000, 
+    parser.add_argument("--full_batch_size", type=int, default=1024, 
                         help="Target effective batch size.")
     parser.add_argument("--accum_grad_steps", type=int, default=1, 
                         help="Steps to accumulate gradients.")
@@ -65,7 +66,6 @@ def setup(args):
     args.accum_grad_steps = accum_grad_steps
     
     return args
-
 
 def main(args):
     """Main training function."""
@@ -110,7 +110,15 @@ def main(args):
     )
     
     # Initialize model
-    model = SimCLR(args.model_name, img_size, args.epochs, args.warmup_epochs, args.weight_decay, args.lr, args.tau)
+    model = MAE(args.model_name, 
+                img_size, 
+                args.epochs, 
+                args.warmup_epochs, 
+                args.weight_decay, 
+                args.lr, 
+                norm_pix_loss=args.norm_pix_loss,
+                mask_ratio=args.mask_ratio,
+                )
 
     # Fit the model
     trainer.fit(model, train_dataloaders=train_loader)

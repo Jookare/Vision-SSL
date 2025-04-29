@@ -1,0 +1,260 @@
+import torch
+import lightning.pytorch as pl
+import timm
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
+from timm.models.vision_transformer import Block
+
+class MAE(pl.LightningModule):
+    """
+    MAE implemented as a PyTorch LightningModule.
+    """
+    def __init__(self, model_name, img_size, epochs, warmup_epochs, weight_decay, lr, norm_pix_loss=True, 
+                 decoder_dim=512, patch_size=16, mask_ratio=0.75):
+        super().__init__()
+        self.save_hyperparameters()
+
+        # Initialize backbone Vision Transformer from timm
+        self.encoder = timm.create_model(model_name, pretrained=False, num_classes=0, img_size=img_size)
+        self.patch_size = patch_size
+        self.mask_ratio = mask_ratio
+        self.img_size = img_size
+        self.norm_pix_loss = norm_pix_loss
+        
+        # Define encoder dimensions
+        self.encoder_dim = self.encoder.num_features
+        self.num_patches = (img_size // patch_size) ** 2
+        
+        # Patch embedding layer
+        self.patchify = nn.Conv2d(3, self.encoder_dim, kernel_size=patch_size, stride=patch_size, bias=False)
+        
+        # Position embeddings and cls_token for encoder
+        self.encoder_pos_embed = nn.Parameter(torch.zeros(1, self.num_patches, self.encoder_dim))
+        nn.init.trunc_normal_(self.encoder_pos_embed, std=0.02)
+        
+        # Decoder
+        self.decoder = MAE_decoder(
+            in_chans=3,
+            patch_size=patch_size,
+            num_patches=self.num_patches,
+            encoder_dim=self.encoder_dim,
+            decoder_embed_dim=decoder_dim
+        )
+        
+    def patchify_img(self, imgs):
+        """Convert images to patches"""
+        # [B, C, H, W] -> [B, D, H/P, W/P] -> [B, N, D]
+        patches = self.patchify(imgs)
+        patches = patches.flatten(2).transpose(1, 2)
+        return patches
+
+    def random_masking(self, x, mask_ratio):
+        """Randomly masks patches"""
+        # Find number of patches and number to keep
+        N = x.shape[1]
+        len_keep = int(N * (1 - mask_ratio))
+
+        # Use random noise from U[0,1] to select random patches
+        noise = torch.rand(x.shape[0], N, device=x.device)
+        ids_shuffle = torch.argsort(noise, dim=1)
+        ids_restore = torch.argsort(ids_shuffle, dim=1)
+
+        # Select the first len_keep patch indices
+        ids_keep = ids_shuffle[:, :len_keep]
+        x_masked = torch.gather(x, dim=1, index=ids_keep.unsqueeze(-1).expand(-1, -1, x.shape[2]))
+
+        # Create a binary mask, where 1 = masked, 0 = visible
+        mask = torch.ones([x.shape[0], N], device=x.device)
+        mask[:, :len_keep] = 0
+        mask = torch.gather(mask, dim=1, index=ids_restore)
+
+        return x_masked, mask, ids_restore
+
+    def encode(self, imgs, mask_ratio=None):
+        """Encode images with masking - for pretraining"""
+        
+        if mask_ratio is None:
+            mask_ratio = self.mask_ratio
+            
+        # Convert images to patches
+        x = self.patchify_img(imgs)
+        
+        # Add positional embeddings
+        x = x + self.encoder_pos_embed
+        
+        # Apply random masking
+        x_masked, mask, ids_restore = self.random_masking(x, mask_ratio)
+        
+        # Pass through encoder blocks
+        x_masked = self.encoder.blocks(x_masked)
+        x_encoded = self.encoder.norm(x_masked)
+        
+        return x_encoded, mask, ids_restore
+    
+    def forward(self, imgs):
+        """Forward pass for downstream tasks"""
+        # Convert images to patches
+        x = self.patchify_img(imgs)
+        
+        # Add positional embeddings
+        x = x + self.encoder_pos_embed
+        
+        # Pass through encoder blocks
+        x = self.encoder.blocks(x)
+        x = self.encoder.norm(x)
+
+        # Mean pooling over the patches as cls_token is not actually required in ViT
+        # https://github.com/google-research/vision_transformer/issues/61#issuecomment-802233921
+        x = x.mean(dim=1)
+        
+        return x
+    
+    def forward_loss(self, imgs):
+        """Forward pass with loss calculation for pretraining"""
+        # Get patches as reconstruction targets
+        target = self.patchify_img(imgs)
+
+        # Normalize pixels if needed
+        if self.norm_pix_loss:
+            mean = target.mean(dim=-1, keepdim=True)
+            var = target.var(dim=-1, keepdim=True)
+            target = (target - mean) / (var + 1.e-6)**.5
+        
+        # Encode with masking
+        x_encoded, mask, ids_restore = self.encode(imgs)
+        
+        # Decode and predict pixel values
+        pred = self.decoder(x_encoded, ids_restore)
+        
+        # Calculate MSE loss only on masked patches
+        loss = (pred - target) ** 2
+        loss = loss.mean(dim=-1)
+        loss = (loss * mask).sum() / mask.sum()
+        
+        return loss, pred, mask
+
+    def training_step(self, batch, batch_idx):
+        imgs = batch
+        loss, _, _ = self.forward_loss(imgs)
+        
+        self.log("train_loss", loss, batch_size=imgs.size(0))
+        return loss
+        
+    def configure_optimizers(self):
+        optimizer = torch.optim.SGD(self.parameters(), lr=self.hparams.lr, momentum=0.9, nesterov=True)
+        
+        # Create linear warmup scheduler
+        warmup_scheduler = LinearLR(
+            optimizer,
+            start_factor=0.01,
+            end_factor=1.0,
+            total_iters=self.hparams.warmup_epochs
+        )
+
+        # Create cosine decay scheduler
+        cosine_scheduler = CosineAnnealingLR(
+            optimizer,
+            T_max=self.hparams.epochs - self.hparams.warmup_epochs,
+            eta_min=0.0
+        )
+
+        # Combine them in sequence
+        lr_scheduler = SequentialLR(
+            optimizer,
+            schedulers=[warmup_scheduler, cosine_scheduler],
+            milestones=[self.hparams.warmup_epochs]
+        )
+        return {"optimizer": optimizer, "lr_scheduler": lr_scheduler}
+
+
+
+class MAE_decoder(nn.Module):
+    """
+    Masked Autoencoder Decoder Module
+    
+    This decoder reconstructs the original image from encoded visible patches.
+    It inserts mask tokens for missing patches and predicts their pixel values.
+    """
+    def __init__(
+        self,
+        in_chans: int = 3,
+        patch_size: int = 16,
+        num_patches: int = 196,
+        encoder_dim: int = 1024,
+        decoder_embed_dim: int = 512,
+        decoder_depth: int = 8,
+        decoder_num_heads: int = 16,
+    ):
+        super().__init__()
+        # Project from encoder dimension to decoder dimension
+        self.decoder_embed = nn.Linear(encoder_dim, decoder_embed_dim, bias=False)
+
+        # Learnable mask token and position embeddings
+        self.mask_token = nn.Parameter(torch.zeros(1, 1, decoder_embed_dim))
+        self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, decoder_embed_dim))
+
+        # Transformer decoder blocks
+        self.blocks = nn.Sequential(
+            *[
+                Block(
+                    dim=decoder_embed_dim,
+                    num_heads=decoder_num_heads,
+                    mlp_ratio=4.0,
+                    qkv_bias=True,
+                    norm_layer=lambda x : nn.LayerNorm(x, eps=1e-6)
+                )
+                for _ in range(decoder_depth)
+            ]
+        )
+
+        # Final normalization and prediction head
+        self.norm = nn.LayerNorm(decoder_embed_dim)
+        self.head = nn.Linear(decoder_embed_dim, patch_size * patch_size * in_chans)
+
+        self._init_weights()
+
+    def _init_weights(self):
+        """Initialize position embeddings and mask token with truncated normal distribution"""
+        nn.init.trunc_normal_(self.pos_embed, std=0.02)
+        nn.init.trunc_normal_(self.mask_token, std=0.02)
+
+    def forward(self, input, ids_restore):
+        """
+        Decode the visible patches and predict the masked patches
+        Args:
+            encoded_visible: [B, N_vis, encoder_dim] - Encoded visible patches
+            ids_restore: [B, N] - Mapping to restore original patch positions
+        
+        Returns:
+            pred: [B, N_total, patch_dim] - Predicted pixel values for all patches
+        """
+        B, _, C = input.shape  # B = batch size, C = encoder dimension
+        
+        # Project encoder features to decoder dimension
+        x = self.decoder_embed(input)
+        
+        # Create mask tokens for all masked positions
+        mask_tokens = self.mask_token.repeat(B, ids_restore.shape[1] - x.shape[1], 1)
+
+        # Concatenate visible tokens with mask tokens [B, N, decoder_dim]
+        x_ = torch.cat([x, mask_tokens], dim=1)  
+
+        # Unshuffle: restore patches to original positions
+        x_ = torch.gather(
+            x_, dim=1, 
+            index=ids_restore.unsqueeze(-1).repeat(1, 1, x_.shape[2])
+        )
+        
+        # Add position embeddings
+        x = x_ + self.pos_embed
+        
+        # Apply decoder transformer blocks
+        x = self.blocks(x)
+        x = self.norm(x)
+        
+        # Project to pixel values
+        pred = self.head(x) # [B, N, P*P*C]
+        return pred
+    
+    

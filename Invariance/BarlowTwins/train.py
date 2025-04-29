@@ -14,7 +14,7 @@ from model import BarlowTwins
 
 def parse_arguments():
     """Parse command line arguments for model training."""
-    parser = argparse.ArgumentParser(description="Training script for Momentum Contrast")
+    parser = argparse.ArgumentParser(description="Training script")
     
     # Model configuration
     parser.add_argument("--model_name", type=str, default="vit_base_patch16_224", 
