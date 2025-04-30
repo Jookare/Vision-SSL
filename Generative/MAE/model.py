@@ -4,14 +4,14 @@ import timm
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
-from timm.models.vision_transformer import Block
+from timm.models.vision_transformer import PatchEmbed, Block
 
 class MAE(pl.LightningModule):
     """
     MAE implemented as a PyTorch LightningModule.
     """
     def __init__(self, model_name, img_size, epochs, warmup_epochs, weight_decay, lr, norm_pix_loss=True, 
-                 decoder_dim=512, patch_size=16, mask_ratio=0.75):
+                 decoder_dim=512, patch_size=16, mask_ratio=0.75, in_chans = 3):
         super().__init__()
         self.save_hyperparameters()
 
@@ -27,7 +27,7 @@ class MAE(pl.LightningModule):
         self.num_patches = (img_size // patch_size) ** 2
         
         # Patch embedding layer
-        self.patchify = nn.Conv2d(3, self.encoder_dim, kernel_size=patch_size, stride=patch_size, bias=False)
+        self.patch_embed = PatchEmbed(img_size, patch_size, in_chans, self.encoder_dim)
         
         # Position embeddings and cls_token for encoder
         self.encoder_pos_embed = nn.Parameter(torch.zeros(1, self.num_patches, self.encoder_dim))
@@ -35,67 +35,17 @@ class MAE(pl.LightningModule):
         
         # Decoder
         self.decoder = MAE_decoder(
-            in_chans=3,
+            in_chans=in_chans,
             patch_size=patch_size,
             num_patches=self.num_patches,
             encoder_dim=self.encoder_dim,
             decoder_embed_dim=decoder_dim
         )
-        
-    def patchify_img(self, imgs):
-        """Convert images to patches"""
-        # [B, C, H, W] -> [B, D, H/P, W/P] -> [B, N, D]
-        patches = self.patchify(imgs)
-        patches = patches.flatten(2).transpose(1, 2)
-        return patches
 
-    def random_masking(self, x, mask_ratio):
-        """Randomly masks patches"""
-        # Find number of patches and number to keep
-        N = x.shape[1]
-        len_keep = int(N * (1 - mask_ratio))
-
-        # Use random noise from U[0,1] to select random patches
-        noise = torch.rand(x.shape[0], N, device=x.device)
-        ids_shuffle = torch.argsort(noise, dim=1)
-        ids_restore = torch.argsort(ids_shuffle, dim=1)
-
-        # Select the first len_keep patch indices
-        ids_keep = ids_shuffle[:, :len_keep]
-        x_masked = torch.gather(x, dim=1, index=ids_keep.unsqueeze(-1).expand(-1, -1, x.shape[2]))
-
-        # Create a binary mask, where 1 = masked, 0 = visible
-        mask = torch.ones([x.shape[0], N], device=x.device)
-        mask[:, :len_keep] = 0
-        mask = torch.gather(mask, dim=1, index=ids_restore)
-
-        return x_masked, mask, ids_restore
-
-    def encode(self, imgs, mask_ratio=None):
-        """Encode images with masking - for pretraining"""
-        
-        if mask_ratio is None:
-            mask_ratio = self.mask_ratio
-            
-        # Convert images to patches
-        x = self.patchify_img(imgs)
-        
-        # Add positional embeddings
-        x = x + self.encoder_pos_embed
-        
-        # Apply random masking
-        x_masked, mask, ids_restore = self.random_masking(x, mask_ratio)
-        
-        # Pass through encoder blocks
-        x_masked = self.encoder.blocks(x_masked)
-        x_encoded = self.encoder.norm(x_masked)
-        
-        return x_encoded, mask, ids_restore
-    
     def forward(self, imgs):
         """Forward pass for downstream tasks"""
         # Convert images to patches
-        x = self.patchify_img(imgs)
+        x = self.patch_embed(imgs)
         
         # Add positional embeddings
         x = x + self.encoder_pos_embed
@@ -113,7 +63,7 @@ class MAE(pl.LightningModule):
     def forward_loss(self, imgs):
         """Forward pass with loss calculation for pretraining"""
         # Get patches as reconstruction targets
-        target = self.patchify_img(imgs)
+        target = self.patchify(imgs)
 
         # Normalize pixels if needed
         if self.norm_pix_loss:
@@ -127,6 +77,9 @@ class MAE(pl.LightningModule):
         # Decode and predict pixel values
         pred = self.decoder(x_encoded, ids_restore)
         
+        # print("x_encoded:", x_encoded.shape)
+        # print("pred:", pred.shape)
+        # print("target:", target.shape)
         # Calculate MSE loss only on masked patches
         loss = (pred - target) ** 2
         loss = loss.mean(dim=-1)
@@ -167,6 +120,65 @@ class MAE(pl.LightningModule):
         )
         return {"optimizer": optimizer, "lr_scheduler": lr_scheduler}
 
+        
+    def patchify(self, imgs):
+        """
+        Convert images to patches
+        # [B, C, H, W] -> [B, C, H/P, P, W/P, P] -> [B, N, D]
+        """
+        assert imgs.shape[2] == imgs.shape[3] and imgs.shape[2] % self.patch_size == 0
+        
+        p = self.patch_size
+        h = w = imgs.shape[2] // p
+        
+        x = imgs.reshape(shape=(imgs.shape[0], 3, h, p, w, p))
+        
+        # Permute the tensor
+        x = torch.einsum('nchpwq->nhwpqc', x)
+        x = x.reshape(shape=(imgs.shape[0], h * w, p**2 * 3))
+        return x
+
+    def random_masking(self, x):
+        """Randomly masks patches"""
+        # Find number of patches and number to keep
+        N = x.shape[1]
+        len_keep = int(N * (1 - self.mask_ratio))
+
+        # Use random noise from U[0,1] to select random patches
+        noise = torch.rand(x.shape[0], N, device=x.device)
+        ids_shuffle = torch.argsort(noise, dim=1)
+        ids_restore = torch.argsort(ids_shuffle, dim=1)
+
+        # Select the first len_keep patch indices
+        ids_keep = ids_shuffle[:, :len_keep]
+        x_masked = torch.gather(x, dim=1, index=ids_keep.unsqueeze(-1).expand(-1, -1, x.shape[2]))
+
+        # Create a binary mask, where 1 = masked, 0 = visible
+        mask = torch.ones([x.shape[0], N], device=x.device)
+        mask[:, :len_keep] = 0
+        mask = torch.gather(mask, dim=1, index=ids_restore)
+
+        return x_masked, mask, ids_restore
+    
+    def encode(self, imgs):
+        """Encode images with masking - for pretraining"""
+        
+        # Convert images to patches
+        x = self.patch_embed(imgs)
+        
+        # Add positional embeddings
+        x = x + self.encoder_pos_embed
+        
+        # Apply random masking
+        x_masked, mask, ids_restore = self.random_masking(x)
+        
+        # Pass through encoder blocks
+        x_masked = self.encoder.blocks(x_masked)
+        x_encoded = self.encoder.norm(x_masked)
+        
+        return x_encoded, mask, ids_restore
+    
+    
 
 
 class MAE_decoder(nn.Module):
@@ -210,7 +222,7 @@ class MAE_decoder(nn.Module):
 
         # Final normalization and prediction head
         self.norm = nn.LayerNorm(decoder_embed_dim)
-        self.head = nn.Linear(decoder_embed_dim, patch_size * patch_size * in_chans)
+        self.head = nn.Linear(decoder_embed_dim, in_chans * patch_size ** 2)
 
         self._init_weights()
 

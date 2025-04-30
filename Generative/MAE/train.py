@@ -32,6 +32,10 @@ def parse_arguments():
                         help='Masking ratio (percentage of removed patches).')
     parser.add_argument('--norm_pix_loss', action='store_true',
                         help='Use (per-patch) normalized pixels as targets for computing loss')
+    parser.add_argument('--patch_size', default=2, type=int,
+                        help='Patch size in pixels.')
+    parser.add_argument('--in_chans', default=3, type=int,
+                        help='Number of channels in images.')
     
     # Batch size configuration
     parser.add_argument("--batch_size", type=int, default=256, 
@@ -118,6 +122,8 @@ def main(args):
                 args.lr, 
                 norm_pix_loss=args.norm_pix_loss,
                 mask_ratio=args.mask_ratio,
+                patch_size=args.patch_size,
+                in_chans=args.in_chans
                 )
 
     # Fit the model
