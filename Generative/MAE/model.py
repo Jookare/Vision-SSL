@@ -41,6 +41,8 @@ class MAE(pl.LightningModule):
             encoder_dim=self.encoder_dim,
             decoder_embed_dim=decoder_dim
         )
+        
+        assert hasattr(self.encoder, "blocks"), "encoder should have blocks "
 
     def forward(self, imgs):
         """Forward pass for downstream tasks"""
@@ -77,9 +79,6 @@ class MAE(pl.LightningModule):
         # Decode and predict pixel values
         pred = self.decoder(x_encoded, ids_restore)
         
-        # print("x_encoded:", x_encoded.shape)
-        # print("pred:", pred.shape)
-        # print("target:", target.shape)
         # Calculate MSE loss only on masked patches
         loss = (pred - target) ** 2
         loss = loss.mean(dim=-1)
@@ -130,8 +129,9 @@ class MAE(pl.LightningModule):
         
         p = self.patch_size
         h = w = imgs.shape[2] // p
+        c = self.hparams.in_chans
         
-        x = imgs.reshape(shape=(imgs.shape[0], 3, h, p, w, p))
+        x = imgs.reshape(shape=(imgs.shape[0], c, h, p, w, p))
         
         # Permute the tensor
         x = torch.einsum('nchpwq->nhwpqc', x)

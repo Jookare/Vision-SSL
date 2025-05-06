@@ -10,7 +10,7 @@ class BYOL(pl.LightningModule):
     """
     BYOL implemented as a PyTorch LightningModule.
     """
-    def __init__(self, model_name, img_size, epochs, warmup_epochs, weight_decay, m, tau, lr, mlp_dim=4096, proj_dim=256):
+    def __init__(self, model_name, img_size, epochs, warmup_epochs, weight_decay, m, lr, mlp_dim=4096, proj_dim=256):
         super().__init__()
         self.save_hyperparameters()
 

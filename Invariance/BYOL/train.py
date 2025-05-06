@@ -29,8 +29,8 @@ def parse_arguments():
                         help="Learning rate.")
     parser.add_argument("--weight_decay", type=float, default=1e-4, 
                         help="Weight decay.")
-    parser.add_argument("--tau", type=float, default=0.2, 
-                        help="Temperature parameter.")
+    parser.add_argument("--m", type=float, default=0.99, 
+                        help="Momentum parameter.")
     
     # Batch size configuration
     parser.add_argument("--batch_size", type=int, default=200, 
@@ -110,7 +110,7 @@ def main(args):
     )
     
     # Initialize model
-    model = BYOL(args.model_name, img_size, args.epochs, args.warmup_epochs, args.weight_decay, args.lr, args.tau)
+    model = BYOL(args.model_name, img_size, args.epochs, args.warmup_epochs, args.weight_decay, args.m, args.lr)
 
     # Fit the model
     trainer.fit(model, train_dataloaders=train_loader)
