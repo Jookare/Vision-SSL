@@ -5,23 +5,25 @@ import copy
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
+from timm.models.vision_transformer import Block, PatchEmbed
 
 class IJEPA(pl.LightningModule):
     """
     I-JEPA implemented as a PyTorch LightningModule.
     """
-    def __init__(self, model_name, img_size, epochs, warmup_epochs, weight_decay, m, lr, mlp_dim=2048, proj_dim=384):
+    def __init__(self, model_name, img_size, patch_size, epochs, warmup_epochs, weight_decay, m, lr, predictor_depth=6):
         super().__init__()
         self.save_hyperparameters()
 
         # Context encoder
-        self.context_encoder = timm.create_model(model_name, pretrained=False, num_classes=0, img_size=img_size)
-        embed_dim = self.context_encoder.num_features
-        self.predictor = nn.Sequential(
-            nn.Linear(embed_dim, mlp_dim),
-            nn.BatchNorm1d(mlp_dim),
-            nn.ReLU(),
-            nn.Linear(mlp_dim, proj_dim),
+        self.context_encoder = IJEPA_encoder(img_size=img_size, num_heads=12)
+        
+        # Predictor
+        self.predictor = IJEPA_predictor(
+            num_patches=img_size//patch_size,
+            embed_dim=self.context_encoder.get_output_dim(),
+            depth=predictor_depth,
+            num_heads=12
         )
         
         # Target encoder
@@ -34,37 +36,22 @@ class IJEPA(pl.LightningModule):
 
     def forward(self, x):
         return self.context_encoder(x)
-    
-    def forward_loss(self, batch):
-        imgs, ctx_mask, tgt_mask = batch  # [B, C, H, W], [B, 1, N], [B, n_tgt, N]
-        B, n_tgt, N = tgt_mask.shape
 
-        # Get context features
-        ctx_feat = self.context_encoder(imgs)          # [B, N, D]
-        ctx_proj = self.predictor(ctx_feat)            # [B, N, D_proj]
-
-        # Get target features (frozen)
-        with torch.no_grad():
-            tgt_feat = self.target_encoder(imgs)       # [B, N, D_proj]
-
-        ctx_out, tgt_out = [], []
-
-        for i in range(B):
-            for j in range(n_tgt):
-                indices = tgt_mask[i, j]
-                ctx_out.append(ctx_proj[i, indices])
-                tgt_out.append(tgt_feat[i, indices])
-
-        pred = torch.cat(ctx_out, dim=0)
-        target = torch.cat(tgt_out, dim=0)
-
-        loss = F.mse_loss(pred, target)
-        return loss
 
     def training_step(self, batch, batch_idx):
-        loss = self.forward_loss(batch)
+        images, masks_context, masks_target = batch
+        
+        z = self.context_encoder(images, masks_context)
+        z = self.predictor(z, masks_context, masks_target)
+        
+        h = self.target_encoder(images)
+        h = apply_masks(h, masks_target)
+        
+        loss = (h - z)**2
+        loss = loss.mean(dim=-1)
+        
         self._momentum_update()
-        self.log("train_loss", loss)
+        self.log("train_loss", loss, batch_size=images.shape[0])
         return loss
         
     @torch.no_grad()
@@ -99,3 +86,177 @@ class IJEPA(pl.LightningModule):
             milestones=[self.hparams.warmup_epochs]
         )
         return {"optimizer": optimizer, "lr_scheduler": lr_scheduler}
+
+
+class IJEPA_encoder(nn.Module):
+    """
+    Custom ViT encoder for I-JEPA.
+    """
+    def __init__(
+        self,
+        image_size=224,
+        patch_size=16,
+        in_chans=3,
+        embed_dim=768,
+        depth=12,
+        num_heads=12,
+        mlp_ratio=4.0,
+        qkv_bias=True,
+        drop_rate=0.0,
+        attn_drop_rate=0.0,
+        drop_path_rate=0.0,
+        norm_layer=nn.LayerNorm,
+    ):
+        super().__init__()
+
+        self.patch_embed = PatchEmbed(
+            img_size=image_size,
+            patch_size=patch_size,
+            in_chans=in_chans,
+            embed_dim=embed_dim
+        )
+        num_patches = self.patch_embed.num_patches
+        self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, embed_dim))
+
+        # Stochastic depth decay rule
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]
+
+        self.blocks = nn.Sequential(*[
+            Block(
+                dim=embed_dim,
+                num_heads=num_heads,
+                mlp_ratio=mlp_ratio,
+                qkv_bias=qkv_bias,
+                proj_drop=drop_rate,
+                attn_drop=attn_drop_rate,
+                drop_path=dpr[i],
+                norm_layer=norm_layer
+            )
+            for i in range(depth)
+        ])
+
+        self.norm = norm_layer(embed_dim)
+
+        self._init_weights()
+
+    def _init_weights(self):
+        nn.init.trunc_normal_(self.pos_embed, std=0.02)
+
+    def forward(self, x, masks=None):
+        
+        # -- patchify x
+        x = self.patch_embed(x)
+        B, N, D = x.shape
+        
+        x = x + self.pos_embed
+        
+        if masks is not None:
+            x = apply_masks(x, masks)
+            
+        x = self.blocks(x)
+        x = self.norm(x)
+        
+        return x
+
+    def get_output_dim(self):
+        return self.patch_embed.proj.out_channels
+
+
+class IJEPA_predictor(nn.Module):
+    """
+    Lightweight ViT predictor for I-JEPA as described in the paper.
+    The predictor maps context embeddings to predicted target embeddings.
+    Uses a narrower ViT architecture (fixed embedding dim of 384).
+    """
+    def __init__(
+        self,
+        num_patches,
+        embed_dim=768,
+        predictor_embed_dim=384,
+        depth=6,  # For ViT-B/16; use 12 for ViT-L/16, ViT-H/16, ViT-H/14; use 16 for ViT-G/16
+        num_heads=12,  # Should match the number of heads in context encoder
+        mlp_ratio=4.0,
+        qkv_bias=True,
+        drop_rate=0.0,
+        attn_drop_rate=0.0,
+        drop_path_rate=0.0,
+        norm_layer=nn.LayerNorm,
+    ):
+        super().__init__()
+        
+        # Input projection to predictor embedding dimension
+        self.predictor_embed = nn.Linear(embed_dim, predictor_embed_dim)
+        self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, predictor_embed_dim))
+        self.mask_token = nn.Parameter(torch.zeros(1, 1, predictor_embed_dim))
+        
+        # Stochastic depth decay rule
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]
+        
+        # Transformer blocks
+        self.blocks = nn.Sequential(*[
+            Block(
+                dim=predictor_embed_dim,
+                num_heads=num_heads,
+                mlp_ratio=mlp_ratio,
+                qkv_bias=qkv_bias,
+                proj_drop=drop_rate,
+                attn_drop=attn_drop_rate,
+                drop_path=dpr[i],
+                norm_layer=norm_layer
+            )
+            for i in range(depth)
+        ])
+        
+        self.norm = norm_layer(predictor_embed_dim)
+        self.predictor_proj = nn.Linear(predictor_embed_dim, embed_dim)
+        
+    
+    def forward(self, x, masks_context, masks_target):
+        assert (masks_context is not None) and (masks_target is not None), 'Cannot run predictor without mask indices'
+        
+        # Determine batch size
+        B = len(x) // len(masks_context)
+        
+        # Project from encoder_dim to predictor_dim
+        x = self.predictor_embed(x)
+        
+        # Add positional embeddings to context tokens
+        x_pos_embed = self.pos_embed.repeat(B, 1, 1)
+        x += apply_masks(x_pos_embed, masks_context)
+        
+        _, N_ctxt, D = x.shape
+        
+        # Find positional embeddings for target tokens
+        pos_embs = self.pos_embed.repeat(B, 1, 1)
+        pos_embs = apply_masks(pos_embs, masks_target)
+        
+        # Init masked tokens and add positional embedding
+        pred_tokens = self.mask_token.repeat(pos_embs.size(0), pos_embs.size(1), 1)
+        pred_tokens += pos_embs
+        
+        # Combine Context and Mask Tokens
+        x = x.repeat(len(masks_target), 1, 1)
+        x = torch.cat([x, pred_tokens], dim=1)
+        
+        # Pass through transformer blocks
+        x = self.blocks(x)
+        x = self.norm(x)
+        
+        # Return the predictions
+        x = x[:, N_ctxt:]
+        
+        # Project back to output dimension
+        x = self.predictor_proj(x)
+        
+        return x
+
+def apply_masks(x, masks):
+    """
+    :param x: tensor of shape [B (batch-size), N (num-patches), D (feature-dim)]
+    :param masks: list of tensors containing indices of patches in [N] to keep
+    """
+    all_x = []
+    for m in masks:
+        mask_keep = m.unsqueeze(-1).repeat(1, 1, x.size(-1))
+        all_x += [torch.gather(x, dim=1, index=mask_keep)]
+    return torch.cat(all_x, dim=0)

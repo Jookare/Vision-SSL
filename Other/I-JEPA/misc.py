@@ -104,9 +104,11 @@ class Multiblock_masking(nn.Module):
         return torch.nonzero(mask.flatten(), as_tuple=False).squeeze(1)
         
     def forward(self, batch):
+        # batch is list of tuples
         B = len(batch)
         
-        collated_batch = torch.utils.data.default_collate(batch)
+        # Stack images to a single tensor
+        collated_batch = torch.stack([B[0] for B in batch], dim=0)
         seed = self.step()
         generator = torch.Generator()
         generator.manual_seed(seed)
@@ -132,8 +134,8 @@ class Multiblock_masking(nn.Module):
             ctx_mask_tensor = ctx_idx.unsqueeze(0)
 
             # Expand the masks for all image in the batch
-            collated_masks_tgt = tgt_mask_tensor.unsqueeze(0).repeat(B, 1, 1)
-            collated_masks_ctx = ctx_mask_tensor.unsqueeze(0).repeat(B, 1, 1)  
+            collated_masks_tgt = tgt_mask_tensor.unsqueeze(1).repeat(1, B,  1)
+            collated_masks_ctx = ctx_mask_tensor.unsqueeze(1).repeat(1,B,  1)  
 
         else:
             # Finding unique mask for all image
@@ -172,7 +174,8 @@ class Multiblock_masking(nn.Module):
                 torch.stack([block[:min_keep_ctx] for block in ctx_mask], dim=0)
                 for ctx_mask in ctx_indices
             ]
+            
 
-            collated_masks_tgt = torch.stack(collated_masks_tgt, dim=0)  # [B, n_tgt, min_keep_tgt]
-            collated_masks_ctx = torch.stack(collated_masks_ctx, dim=0)  # [B, 1, min_keep_ctx]
+            collated_masks_tgt = torch.stack(collated_masks_tgt, dim=1)  # [n_tgt, B, min_keep_tgt]
+            collated_masks_ctx = torch.stack(collated_masks_ctx, dim=1)  # [1, B, min_keep_ctx]
         return collated_batch, collated_masks_ctx, collated_masks_tgt

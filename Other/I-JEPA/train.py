@@ -136,6 +136,7 @@ def main(args):
     # Initialize model
     model = IJEPA(args.model_name,
                 args.img_size,
+                args.patch_size,
                 args.epochs,
                 args.warmup_epochs,
                 args.weight_decay,

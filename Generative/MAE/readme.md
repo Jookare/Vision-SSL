@@ -1,33 +1,35 @@
-# 🧩 MAE
+# 🧠 I-JEPA
 
-*Masked Autoencoders for Self-Supervised Vision Pretraining*
+*Self-Supervised Learning with an Image Joint-Embedding Predictive Architecture*
 
-This folder contains the implementation of MAE, a self-supervised method that learns to reconstruct masked portions of an image, inspired by masked language modeling in NLP.
+This folder contains the implementation of **I-JEPA**, a self-supervised method that learns abstract representations by predicting latent features of masked regions using visible context — without pixel-level reconstruction.
 
 > 📄 Paper\
-> https://arxiv.org/abs/2111.06377 published in CVPR 2022.
+> https://arxiv.org/abs/2301.08243 published in CVPR 2023.
 
 
 ## Overview
-MAE masks a large portion (e.g., 75%) of the image patches and trains a model to reconstruct the missing parts. This encourages the model to build rich internal representations, useful for downstream tasks.
+I-JEPA departs from pixel-level or patch reconstruction (like MAE) and instead predicts feature embeddings of masked regions based on visible context — enabling a higher-level, more semantic learning signal.
 
-For an intuitive explanation: 
-- [Review: MAE - Medium](https://sh-tsang.medium.com/review-masked-autoencoders-are-scalable-vision-learners-b7c42910f7b4)  
+For a conceptual overview:
+- [Review: I-JEPA - Meta](https://ai.meta.com/blog/yann-lecun-ai-model-i-jepa/)  
 
 
 ## Architecture
 
-![Masked Autoencoder architecture diagram](../../assets/MAE.png)
+![I-JEPA architecture diagram](../../assets/I-JEPA.png)
 
-- Input image is divided into patches
+- Divide image into patches
 
-- A high ratio (e.g., 75%) of patches are masked randomly
+- Mask a subset of patches (targets)
 
-- Encoder processes only the visible patches
+- A **context encoder** processes visible patches
 
-- Decoder tries to reconstruct the original image from the sparse latent representation
+- A **predictor** estimates the target embeddings
 
-- Loss is computed between the reconstructed and original masked patches
+- The targets come from a **frozen target encoder** applied to the masked patches
+
+- Loss is computed in feature space, not pixel space
 
 ## Usage
 
@@ -37,5 +39,5 @@ python train.py --norm_pix_loss
 ```
 
 After pretraining
-- ✅ Keep the encoder
-- ❌ Discard the decoder
+- ✅ Keep the context encoders
+- ❌ Discard the target encoder and predictor head
