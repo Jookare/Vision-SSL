@@ -178,4 +178,5 @@ class Multiblock_masking(nn.Module):
 
             collated_masks_tgt = torch.stack(collated_masks_tgt, dim=1)  # [n_tgt, B, min_keep_tgt]
             collated_masks_ctx = torch.stack(collated_masks_ctx, dim=1)  # [1, B, min_keep_ctx]
+            
         return collated_batch, collated_masks_ctx, collated_masks_tgt

@@ -58,7 +58,7 @@ def parse_arguments():
                         help="Steps to accumulate gradients.")
 
     # Hardware configuration
-    parser.add_argument("--gpu_id", type=int, nargs="+", default=[0],
+    parser.add_argument("--gpu_id", type=int, nargs="+", default=[1],
                         help="GPU ids to use.")
     parser.add_argument('--nodes', type=int, default=1,
                         help='Number of compute nodes.')
@@ -92,7 +92,7 @@ def main(args):
     train_dataset = torchvision.datasets.CIFAR10(root="../../data/", train=True, transform=augment)
 
     # Dataloader with augmentation
-    collate_fn = Multiblock_masking(img_size=(args.img_size,args.img_size),
+    collate_fn = Multiblock_masking(img_size=(args.img_size, args.img_size),
                                     patch_size=args.patch_size,
                                     ctx_scale=args.context_scale,
                                     tgt_scale=args.target_scale,
@@ -123,8 +123,8 @@ def main(args):
     # Trainer
     trainer = Trainer(
         max_epochs=args.epochs,
-        accelerator="cpu" if torch.cuda.is_available() else "cpu",
-        # devices=args.gpu_id,
+        accelerator="gpu" if torch.cuda.is_available() else "cpu",
+        devices=args.gpu_id,
         num_nodes=args.nodes,
         strategy="ddp" if args.distributed else "auto",
         accumulate_grad_batches=args.accum_grad_steps,

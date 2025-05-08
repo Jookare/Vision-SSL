@@ -16,11 +16,11 @@ class IJEPA(pl.LightningModule):
         self.save_hyperparameters()
 
         # Context encoder
-        self.context_encoder = IJEPA_encoder(img_size=img_size, num_heads=12)
+        self.context_encoder = IJEPA_encoder(img_size=img_size, patch_size=patch_size, num_heads=12)
         
         # Predictor
         self.predictor = IJEPA_predictor(
-            num_patches=img_size//patch_size,
+            num_patches=(img_size//patch_size)**2,
             embed_dim=self.context_encoder.get_output_dim(),
             depth=predictor_depth,
             num_heads=12
@@ -37,10 +37,8 @@ class IJEPA(pl.LightningModule):
     def forward(self, x):
         return self.context_encoder(x)
 
-
     def training_step(self, batch, batch_idx):
         images, masks_context, masks_target = batch
-        
         z = self.context_encoder(images, masks_context)
         z = self.predictor(z, masks_context, masks_target)
         
@@ -62,7 +60,11 @@ class IJEPA(pl.LightningModule):
             target_param.data = m * target_param.data + (1 - m) * context_param.data
             
     def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(self.parameters(), lr=self.hparams.lr, weight_decay=self.hparams.weight_decay)
+        params = (
+            list(self.context_encoder.parameters())+
+            list(self.predictor.parameters())
+        )
+        optimizer = torch.optim.AdamW(params, lr=self.hparams.lr, weight_decay=self.hparams.weight_decay)
         
         # Create linear warmup scheduler
         warmup_scheduler = LinearLR(
@@ -94,7 +96,7 @@ class IJEPA_encoder(nn.Module):
     """
     def __init__(
         self,
-        image_size=224,
+        img_size=224,
         patch_size=16,
         in_chans=3,
         embed_dim=768,
@@ -110,7 +112,7 @@ class IJEPA_encoder(nn.Module):
         super().__init__()
 
         self.patch_embed = PatchEmbed(
-            img_size=image_size,
+            img_size=img_size,
             patch_size=patch_size,
             in_chans=in_chans,
             embed_dim=embed_dim
@@ -144,7 +146,7 @@ class IJEPA_encoder(nn.Module):
 
     def forward(self, x, masks=None):
         
-        # -- patchify x
+        # patchify x
         x = self.patch_embed(x)
         B, N, D = x.shape
         
@@ -252,11 +254,13 @@ class IJEPA_predictor(nn.Module):
 
 def apply_masks(x, masks):
     """
-    :param x: tensor of shape [B (batch-size), N (num-patches), D (feature-dim)]
-    :param masks: list of tensors containing indices of patches in [N] to keep
+    Safer version: applies masks to x, with error checks.
     """
     all_x = []
-    for m in masks:
+    for i, m in enumerate(masks):
+        if m.max().item() >= x.size(1):
+            raise ValueError(f"Mask index {m.max().item()} out of bounds for input of size {x.size(1)} (batch {i})")
         mask_keep = m.unsqueeze(-1).repeat(1, 1, x.size(-1))
-        all_x += [torch.gather(x, dim=1, index=mask_keep)]
+        selected = torch.gather(x, dim=1, index=mask_keep)
+        all_x.append(selected)
     return torch.cat(all_x, dim=0)
