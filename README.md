@@ -24,7 +24,8 @@ Currently implemented methods include the following models:
 | SimCLR          | 2020 | Invariance   |
 | BYOL            | 2020 | Invariance   |
 | Barlow Twins    | 2021 | Invariance   |
-
+| MAE	          | 2021 | Generative   |
+| I-JEPA	      | 2023 | Other        |
 
 > [!Note]  
 > All models are structured such that the `forward()` method returns the **encoder output** used in downstream tasks.  
@@ -36,20 +37,19 @@ Planned implementations include the following:
 | Model           | Year | Category     |
 |-----------------|------|--------------|
 | SimMIM	      | 2021 | Generative   |
-| MAE	          | 2021 | Generative   |
 | BEiT	          | 2022 | Generative   |
 | DINO	          | 2021 | Other        |
 | DINOv2          | 2023 | Other        |
-| I-JEPA	      | 2023 | Other        |
 
 ## 📁 Project Structure
 ```
 . 
 ├── generative/ 
-│   └── <Method>/ 
+│   └── <method>/ 
 ├── invariance/ 
-│   └── MoCo/ 
-│   └── SimCLR/ 
+│   └── <method>/ 
+├── other/ 
+│   └── <method>/ 
 └── images/ 
     └── <method>.png
 ```
